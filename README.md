@@ -4,7 +4,7 @@
 
 ## 🚀 Canlı Demo
 
-**[Buradan direkt dene →](https://astro-carto.onrender.com)** *(link'i Render'dan aldığın gerçek URL ile değiştir)*
+**[Buradan direkt dene →]([https://astro-carto.onrender.com](https://astro-carto.onrender.com))**
 
 ## 📸 Önizleme
 
