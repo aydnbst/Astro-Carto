@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Astro-Carto: Van Gogh Map Generator</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a1a;
+            color: #fff;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #sidebar {
+            width: 300px;
+            padding: 20px;
+            background-color: #262626;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        #map-container {
+            flex: 1;
+            position: relative;
+            height: 100%;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        button {
+            background-color: #ff9f43;
+            color: white;
+            border: none;
+            padding: 12px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s, opacity 0.3s;
+        }
+        button:hover {
+            background-color: #ee5253;
+        }
+        button:disabled {
+            background-color: #57606f;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        #result-modal {
+            display: none;
+            position: absolute;
+            top: 10%;
+            left: 10%;
+            width: 80%;
+            height: 80%;
+            background: rgba(0,0,0,0.95);
+            border: 2px solid #ff9f43;
+            border-radius: 10px;
+            z-index: 2000;
+            padding: 20px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+        #result-image {
+            max-width: 100%;
+            max-height: 85%;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            font-size: 30px;
+            cursor: pointer;
+            color: #ff9f43;
+            transition: color 0.2s;
+        }
+        .close-btn:hover {
+            color: #ee5253;
+        }
+        #loading {
+            display: none;
+            font-style: italic;
+            color: #ff9f43;
+            text-align: center;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+
+        /* 🎯 Haritalanacak alanı gösteren sabit ölçek/çerçeve kutusu */
+        #capture-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 400px;
+            height: 400px;
+            transform: translate(-50%, -50%);
+            border: 2px dashed #ff9f43;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+            pointer-events: none;
+            z-index: 500;
+            box-sizing: border-box;
+        }
+        #capture-box::after {
+            content: "Bu alan haritalanacak";
+            position: absolute;
+            bottom: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            color: #ff9f43;
+            white-space: nowrap;
+            background: rgba(0,0,0,0.6);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>Astro-Carto 🎨</h2>
+        <p>Haritayı istediğin şehre getir, ölçeği ayarla ve Van Gogh fırçasıyla yeniden boya.</p>
+        <button id="btn-transform">Sanatsal Harita Üret</button>
+        <div id="loading">Fırça darbeleri uygulanıyor, lütfen bekleyin...</div>
+    </div>
+
+    <div id="map-container">
+        <div id="map"></div>
+        <div id="capture-box"></div>
+        
+        <div id="result-modal">
+            <span class="close-btn" onclick="closeModal()">&times;</span>
+            <h3 style="margin-top:0;">Sanatsal Haritanız Hazır! ✨</h3>
+            <img id="result-image" src="" alt="Van Gogh Haritası">
+            <br>
+            <a id="download-link" href="" download="vangogh_map.png">
+                <button id="btn-download">Poster Olarak İndir (HD)</button>
+            </a>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        var map = L.map('map').setView([41.0655, 28.9974], 14);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CartoDB',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        const btnTransform = document.getElementById('btn-transform');
+        const loadingDiv = document.getElementById('loading');
+        const CAPTURE_BOX_SIZE = 400; // #capture-box CSS'teki genişlik/yükseklik ile eşleşmeli
+
+        // Ekrandaki ölçek kutusunun kapsadığı gerçek coğrafi sınırları (bbox) hesaplar
+        function getCaptureBounds() {
+            var mapSize = map.getSize(); // {x: width, y: height} piksel cinsinden
+            var half = CAPTURE_BOX_SIZE / 2;
+            var centerPoint = mapSize.divideBy(2);
+
+            var nwPoint = L.point(centerPoint.x - half, centerPoint.y - half);
+            var sePoint = L.point(centerPoint.x + half, centerPoint.y + half);
+
+            var nwLatLng = map.containerPointToLatLng(nwPoint);
+            var seLatLng = map.containerPointToLatLng(sePoint);
+
+            return {
+                north: nwLatLng.lat,
+                west: nwLatLng.lng,
+                south: seLatLng.lat,
+                east: seLatLng.lng
+            };
+        }
+
+        btnTransform.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            btnTransform.disabled = true;
+            loadingDiv.style.display = 'block';
+            document.body.style.cursor = 'wait';
+            
+            var bounds = getCaptureBounds();
+            var zoom = Math.round(map.getZoom());
+            
+            fetch('/transform', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    north: bounds.north,
+                    south: bounds.south,
+                    east: bounds.east,
+                    west: bounds.west,
+                    zoom: zoom
+                })
+            })
+            .then(response => {
+                return response.json().then(data => {
+                    if (!response.ok) {
+                        throw new Error(data.error || "Bilinmeyen bir sunucu hatası oluştu.");
+                    }
+                    return data;
+                });
+            })
+            .then(data => {
+                resetUI();
+                if(data.success) {
+                    var timestamp = new Date().getTime();
+                    document.getElementById('result-image').src = data.art_url + '?t=' + timestamp;
+                    document.getElementById('download-link').href = data.art_url + '?t=' + timestamp;
+                    document.getElementById('result-modal').style.display = 'block';
+                }
+            })
+            .catch(err => {
+                resetUI();
+                console.error(err);
+                alert("Hata Detayı: " + err.message);
+            });
+        });
+
+        function closeModal() {
+            document.getElementById('result-modal').style.display = 'none';
+        }
+
+        function resetUI() {
+            btnTransform.disabled = false;
+            loadingDiv.style.display = 'none';
+            document.body.style.cursor = 'default';
+        }
+    </script>
+</body>
+</html>
